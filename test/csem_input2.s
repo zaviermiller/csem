@@ -6,6 +6,10 @@
 main:                                   # @main
 	.cfi_startproc
 # %bb.0:
+	movl	$3, -20(%rsp)
+	movl	$4, -8(%rsp)
+	movl	$5, -24(%rsp)
+	movl	$6, -16(%rsp)
 	xorl	%eax, %eax
 	retq
 .Lfunc_end0:

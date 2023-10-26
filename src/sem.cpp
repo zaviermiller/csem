@@ -920,8 +920,19 @@ cast (struct sem_rec *y, int t)
 struct sem_rec*
 set(const char *op, struct sem_rec *x, struct sem_rec *y)
 {
-  fprintf(stderr, "sem: set not implemented\n");
-  return ((struct sem_rec *) NULL);
+  Value *val;
+  if (*op == (char)0) {
+    if (x->s_type & T_INT) {
+      val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
+    } else if (x->s_type & T_DOUBLE) {
+      fprintf(stderr, "found a double\n");
+      val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
+    }
+    return s_node(val, T_ADDR);
+  } else {
+    fprintf(stderr, "sem: arithmetic set not implemented\n");
+    return ((struct sem_rec *) NULL);
+  }
 }
 
 /*
