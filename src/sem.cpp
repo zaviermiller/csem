@@ -129,7 +129,7 @@ void print_sem_rec(struct sem_rec *s) {
 
 int get_link_length(struct sem_rec *s) {
   int total = 0;
-  for (struct sem_rec *p = s; s->s_link; s = s->s_link) {
+  for (s; s->s_link; s = s->s_link) {
     total += 1;
   }
 
@@ -260,6 +260,85 @@ void backpatch(struct sem_rec *rec, void *bb)
       exit(1);
     }
   }
+}
+
+
+/*
+ * create_binary_op - uses the LLVM API to create binary operations according to the passed operator
+ *
+ * No LLVM API calls, but most functionality is abstracted to a separate
+ * method used by op2, opb, and set.
+ *
+ * The separate method uses the following API calls:
+ * IRBuilder::CreateAdd(Value *, Value *)
+ * IRBuilder::CreateFAdd(Value *, Value *)
+ * IRBuilder::CreateSub(Value *, Value *)
+ * IRBuilder::CreateFSub(Value *, Value *)
+ * IRBuilder::CreateMul(Value *, Value *)
+ * IRBuilder::CreateFMul(Value *, Value *)
+ * IRBuilder::CreateSDiv(Value *, Value *)
+ * IRBuilder::CreateFDiv(Value *, Value *)
+ * IRBuilder::CreateSRem(Value *, Value *)
+ * IRBuilder::CreateAnd(Value *, Value *)
+ * IRBuilder::CreateOr(Value *, Value *)
+ * IRBuilder::CreateXOr(Value *, Value *)
+ * IRBuilder::CreateShl(Value *, Value *)
+ * IRBuilder::CreateAShr(Value *, Value *)
+ */
+
+Value *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b) {
+  Value *a_val, *b_val;
+  if (a->s_type & T_INT && b->s_type & T_DOUBLE) {
+    a = cast(a, T_DOUBLE);
+  } else if (b->s_type & T_DOUBLE && b->s_type & T_DOUBLE) {
+    b = cast(b, T_DOUBLE);
+  }
+
+  a_val = (Value *)a->s_value;
+  b_val = (Value *)b->s_value;
+
+  if (a->s_type & T_INT && b->s_type & T_INT) {
+    if (op == "+")
+      return Builder.CreateAdd(a_val, b_val);
+    else if (op == "-")
+      return Builder.CreateSub(a_val, b_val);
+    else if (op == "*")
+      return Builder.CreateMul(a_val, b_val);
+    else if (op == "/")
+      return Builder.CreateSDiv(a_val, b_val);
+    else if (op == "%")
+      return Builder.CreateSRem(a_val, b_val);
+    else if (op == "&")
+      return Builder.CreateAnd(a_val, b_val);
+    else if (op == "|")
+      return Builder.CreateOr(a_val, b_val);
+    else if (op == "^")
+      return Builder.CreateXor(a_val, b_val);
+    else if (op == "<<")
+      return Builder.CreateShl(a_val, b_val);
+    else if (op == ">>")
+      return Builder.CreateAShr(a_val, b_val);
+    else {
+      fprintf(stderr, "invalid operation\n");
+      return (Value *)NULL;
+    }
+  } else if (a->s_type & T_DOUBLE && b->s_type & T_DOUBLE) {
+    if (op == "+")
+      return Builder.CreateFAdd(a_val, b_val);
+    else if (op == "-")
+      return Builder.CreateFSub(a_val, b_val);
+    else if (op == "*")
+      return Builder.CreateFMul(a_val, b_val);
+    else if (op == "/")
+      return Builder.CreateFDiv(a_val, b_val);
+    else {
+      fprintf(stderr, "invalid operation\n");
+      return (Value *)NULL;
+    }
+  }
+
+  fprintf(stderr, "sem: invalid types for binary operation (%s) & (%s)\n", type_string(a->s_type).c_str(), type_string(b->s_type).c_str());
+  return (Value *)NULL;
 }
 
 
@@ -480,11 +559,13 @@ dodo(void *m1, void *m2, struct sem_rec *cond, void *m3)
  * None -- but uses backpatch
  */
 void
-dofor(void *m1, struct sem_rec *cond, void *m2, struct sem_rec *n1, void *m3,
-  struct sem_rec *n2, void *m4)
+dofor(void *cond_stmt, struct sem_rec *cond, void *iter_stmt, struct sem_rec *n1, void *loop_body,
+  struct sem_rec *n2, void *exit)
 {
-  fprintf(stderr, "sem: dofor not implemented\n");
-  return;
+  backpatch(cond->s_true, loop_body);
+  backpatch(cond->s_false, exit);
+  backpatch(n2, iter_stmt);
+  backpatch(n1, cond_stmt);
 }
 
 /*
@@ -534,8 +615,6 @@ void
 doifelse(struct sem_rec *cond, void *m1, struct sem_rec *n,
   void *m2, void *m3)
 {
-  fprintf(stderr, "true list length: %d\n", get_link_length(cond->s_true));
-  fprintf(stderr, "false list length: %d\n", get_link_length(cond->s_false));
   backpatch(cond->s_true, m1);
   backpatch(cond->s_false, m2);
   backpatch(n, m3);
@@ -757,8 +836,12 @@ id(char *x)
 struct sem_rec*
 indx(struct sem_rec *x, struct sem_rec *i)
 {
-  fprintf(stderr, "sem: indx not implemented\n");
-  return ((struct sem_rec *) NULL);
+  vector<Value *> indices;
+  indices.push_back((Value *)i->s_value);
+
+  Value *val = Builder.CreateGEP(get_llvm_type(x->s_type), (Value *)x->s_value, makeArrayRef(indices));
+
+  return s_node(val, (x->s_type &(~T_ARRAY)) | T_ADDR);
 }
 
 /*
@@ -984,13 +1067,14 @@ rel(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 cast (struct sem_rec *y, int t)
 {
+  if (y->s_type == t) return y;
   Value *val;
-  if (y->s_type == T_INT && t == T_DOUBLE) {
+  if (y->s_type & T_INT && t & T_DOUBLE) {
     val = Builder.CreateSIToFP((Value *)y->s_value, get_llvm_type(T_DOUBLE));
-  } else if (y->s_type == T_DOUBLE && t == T_INT) {
+  } else if (y->s_type & T_DOUBLE && t & T_INT) {
     val = Builder.CreateFPToSI((Value *)y->s_value, get_llvm_type(T_INT));
   } else {
-    fprintf(stderr, "sem: invalid type cast\n");
+    fprintf(stderr, "sem: invalid type cast (%s -> %s)\n", type_string(y->s_type).c_str(), type_string(t).c_str());
     return (struct sem_rec *)NULL;
   }
   return s_node((void *)val, t);
@@ -1027,15 +1111,20 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
   if (*op == (char)0) {
     if (x->s_type & T_INT) {
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
+      return s_node(val, T_ADDR | T_INT);
     } else if (x->s_type & T_DOUBLE) {
       ConstantInt *ci = llvm::dyn_cast<ConstantInt>((Value *)y->s_value);
       Value *doubleVal = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
       val = Builder.CreateStore(doubleVal, (Value *)x->s_value);
+      return s_node(val, T_ADDR | T_DOUBLE);
+    } else {
+      // TODO: add error message
+      return NULL;
     }
-    return s_node(val, T_ADDR);
   } else {
-    fprintf(stderr, "sem: arithmetic set not implemented\n");
-    return ((struct sem_rec *) NULL);
+    Value *op_result = create_binary_op(string(op), x, y);
+    val = Builder.CreateStore(op_result, (Value *)x->s_value);
+    return s_node(val, T_ADDR);
   }
 }
 
