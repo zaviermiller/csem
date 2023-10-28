@@ -249,7 +249,6 @@ void backpatch(struct sem_rec *rec, void *bb)
   struct sem_rec *p = rec;
 
   for (p = rec; p; p = p->s_link) {
-    fprintf(stderr, "here ");
     if ((br_inst = llvm::dyn_cast<BranchInst>((Value *) p->s_value))) {
       for (i = 0; i < br_inst->getNumSuccessors(); i++) {
         if (br_inst->getSuccessor(i) == ((BasicBlock *) p->s_bb)) {
@@ -261,7 +260,6 @@ void backpatch(struct sem_rec *rec, void *bb)
       exit(1);
     }
   }
-  fprintf(stderr, "\n");
 }
 
 
@@ -371,8 +369,7 @@ ccexpr(struct sem_rec *e)
 struct sem_rec*
 ccnot(struct sem_rec *e)
 {
-  fprintf(stderr, "sem: ccnot not implemented\n");
-  return ((struct sem_rec *) NULL);
+  return node((void *)NULL, (void *)NULL, 0, (struct sem_rec *)NULL, e->s_false, e->s_true);
 }
 
 /*
