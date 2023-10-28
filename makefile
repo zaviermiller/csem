@@ -112,5 +112,5 @@ test_clean:
 	rm -f clang_exe ref_csem_exe csem_exe test/*
 
 clean: test_clean
-	rm -f $(CSEM) tmp.c src/cgram.cpp include/y.tab.h obj/*
+	rm -f $(CSEM) tmp.c src/cgram.cpp include/y.tab.h obj/* .core*
 

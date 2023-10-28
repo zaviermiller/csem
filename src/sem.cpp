@@ -53,6 +53,7 @@ using llvm::BranchInst;
 using llvm::Instruction;
 using llvm::LLVMContext;
 using llvm::ConstantInt;
+using llvm::ConstantFP;
 using llvm::GlobalValue;
 using llvm::IntegerType;
 using llvm::PointerType;
@@ -97,6 +98,49 @@ struct gotonode {
 
 int numgotos = 0;    /* number of gotos to be backpatched */
 int numlabelids = 0; /* total label ids in function */
+
+string type_string(int t) {
+  string s;
+  if (t & T_INT) s += "INT,";
+  if (t & T_STR) s += "STRING,";
+  if (t & T_DOUBLE) s += "DOUBLE,";
+  if (t & T_PROC) s += "FUNCTION,";
+  if (t & T_ARRAY) s += "ARRAY,";
+  if (t & T_ADDR) s += "ADDRESS,";
+  if (t & T_LBL) s += "LABEL,";
+
+  if (s == "") s = "NOT SET,";
+
+  s.pop_back();
+
+  return s;
+}
+
+void print_sem_rec(struct sem_rec *s) {
+  fprintf(stderr, "    sem_rec ptr:   %p\n", s);
+  fprintf(stderr, "      value ptr:   %p\n", s->s_value);
+  fprintf(stderr, "basic block ptr:   %p\n", s->s_bb);
+  fprintf(stderr, "      value ptr:   %p\n", s->s_value);
+  fprintf(stderr, "           type:   %s\n", type_string(s->s_type).c_str());
+  fprintf(stderr, "       link ptr:   %p\n", s->s_link);
+  fprintf(stderr, "      false ptr:   %p\n", s->s_false);
+  fprintf(stderr, "       true ptr:   %p\n\n", s->s_false);
+}
+
+int get_link_length(struct sem_rec *s) {
+  int total = 0;
+  for (struct sem_rec *p = s; s->s_link; s = s->s_link) {
+    total += 1;
+  }
+
+  return total;
+}
+
+// assumes that the sem_recs s_value is a ConstantInt
+int extract_int_from_sem_rec(struct sem_rec *s) {
+  ConstantInt *ci = llvm::dyn_cast<ConstantInt>((Value *)s->s_value);
+  return ci->getValue().getSExtValue();
+}
 
 std::string new_label()
 {
@@ -202,17 +246,22 @@ void backpatch(struct sem_rec *rec, void *bb)
 {
   unsigned i;
   BranchInst *br_inst;
+  struct sem_rec *p = rec;
 
-  if ((br_inst = llvm::dyn_cast<BranchInst>((Value *) rec->s_value))) {
-    for (i = 0; i < br_inst->getNumSuccessors(); i++) {
-      if (br_inst->getSuccessor(i) == ((BasicBlock *) rec->s_bb)) {
-        br_inst->setSuccessor(i, (BasicBlock *)bb);
+  for (p = rec; p; p = p->s_link) {
+    fprintf(stderr, "here ");
+    if ((br_inst = llvm::dyn_cast<BranchInst>((Value *) p->s_value))) {
+      for (i = 0; i < br_inst->getNumSuccessors(); i++) {
+        if (br_inst->getSuccessor(i) == ((BasicBlock *) p->s_bb)) {
+          br_inst->setSuccessor(i, (BasicBlock *)bb);
+        }
       }
+    } else {
+      fprintf(stderr, "error: backpatch with non-branch instruction\n");
+      exit(1);
     }
-  } else {
-    fprintf(stderr, "error: backpatch with non-branch instruction\n");
-    exit(1);
   }
+  fprintf(stderr, "\n");
 }
 
 
@@ -230,8 +279,28 @@ void backpatch(struct sem_rec *rec, void *bb)
 struct sem_rec*
 call(char *f, struct sem_rec *args)
 {
-  fprintf(stderr, "sem: call not implemented\n");
-  return ((struct sem_rec*) NULL);
+  vector<Value *> vals;
+  struct sem_rec *arg = args;
+  while (arg != NULL) {
+    vals.insert(vals.begin(), (Value *)arg->s_value);
+    arg = arg->s_link;
+  }
+
+  struct id_entry *entry = lookup(f, 0);
+
+  if (entry == NULL) {
+    fprintf(stderr, "sem: function not defined\n");
+    return (struct sem_rec *)NULL;
+  }
+
+  // if (entry->i_type != T_PROC) {
+    // fprintf(stderr, "sem: attempting to call non-function\n");
+    // return (struct sem_rec *)NULL;
+  // }
+
+  Value *val = Builder.CreateCall((Function *)entry->i_value, makeArrayRef(vals));
+
+  return s_node(val, T_PROC);
 }
 
 
@@ -247,8 +316,16 @@ call(char *f, struct sem_rec *args)
 struct sem_rec*
 ccand(struct sem_rec *e1, void *m, struct sem_rec *e2)
 {
-  fprintf(stderr, "sem: ccand not implemented\n");
-  return ((struct sem_rec*) NULL);
+  backpatch(e1->s_true, m);
+
+  return node(
+          (void *)NULL,
+          (void *)NULL,
+          0,
+          (struct sem_rec *)NULL,
+          e2->s_true,
+          merge(e1->s_false, e2->s_false)
+         );
 }
 
 /*
@@ -310,8 +387,15 @@ ccnot(struct sem_rec *e)
 struct sem_rec*
 ccor(struct sem_rec *e1, void *m, struct sem_rec *e2)
 {
-  fprintf(stderr, "sem: ccor not implemented\n");
-  return NULL;
+  backpatch(e1->s_false, m);
+  return node(
+          (void *)NULL,
+          (void *)NULL,
+          0,
+          (struct sem_rec *)NULL,
+          merge(e1->s_true, e2->s_true),
+          e2->s_false
+         );
 }
 
 /*
@@ -453,8 +537,11 @@ void
 doifelse(struct sem_rec *cond, void *m1, struct sem_rec *n,
   void *m2, void *m3)
 {
-  fprintf(stderr, "sem: doifelse not implemented\n");
-  return;
+  fprintf(stderr, "true list length: %d\n", get_link_length(cond->s_true));
+  fprintf(stderr, "false list length: %d\n", get_link_length(cond->s_false));
+  backpatch(cond->s_true, m1);
+  backpatch(cond->s_false, m2);
+  backpatch(n, m3);
 }
 
 /*
@@ -509,8 +596,8 @@ dowhile(void *m1, struct sem_rec *cond, void *m2,
 struct sem_rec*
 exprs(struct sem_rec *l, struct sem_rec *e)
 {
-  fprintf(stderr, "sem: exprs not implemented\n");
-  return ((struct sem_rec *) NULL);
+  e->s_link = l;
+  return e;
 }
 
 /*
@@ -738,8 +825,13 @@ m ()
  */
 struct sem_rec *n()
 {
-  fprintf(stderr, "sem: n not implemented\n");
-  return NULL;
+  BasicBlock *bb;
+
+  bb = create_tmp_label();
+
+  Value *val = Builder.CreateBr(bb);
+
+  return node((void *)val, (void *)bb, 0, (struct sem_rec *)NULL, (struct sem_rec *)NULL, (struct sem_rec *)NULL);
 }
 
 /*
@@ -836,7 +928,13 @@ opb(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 rel(const char *op, struct sem_rec *x, struct sem_rec *y)
 {
-  Value *val;
+  Value *val = NULL;
+
+  if (x->s_type == T_INT && y->s_type == T_DOUBLE) {
+    x = cast(x, T_DOUBLE);
+  } else if (x->s_type == T_DOUBLE && y->s_type == T_INT) {
+    y = cast(y, T_DOUBLE);
+  }
 
   if (*op == '<') {
     if (x->s_type == T_INT && y->s_type == T_INT) {
@@ -889,8 +987,16 @@ rel(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 cast (struct sem_rec *y, int t)
 {
-  fprintf(stderr, "sem: cast not implemented\n");
-  return ((struct sem_rec *) NULL);
+  Value *val;
+  if (y->s_type == T_INT && t == T_DOUBLE) {
+    val = Builder.CreateSIToFP((Value *)y->s_value, get_llvm_type(T_DOUBLE));
+  } else if (y->s_type == T_DOUBLE && t == T_INT) {
+    val = Builder.CreateFPToSI((Value *)y->s_value, get_llvm_type(T_INT));
+  } else {
+    fprintf(stderr, "sem: invalid type cast\n");
+    return (struct sem_rec *)NULL;
+  }
+  return s_node((void *)val, t);
 }
 
 /*
@@ -925,8 +1031,9 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
     if (x->s_type & T_INT) {
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
     } else if (x->s_type & T_DOUBLE) {
-      fprintf(stderr, "found a double\n");
-      val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
+      ConstantInt *ci = llvm::dyn_cast<ConstantInt>((Value *)y->s_value);
+      Value *doubleVal = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
+      val = Builder.CreateStore(doubleVal, (Value *)x->s_value);
     }
     return s_node(val, T_ADDR);
   } else {
@@ -949,8 +1056,10 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 genstring(char *s)
 {
-  fprintf(stderr, "sem: genstring not implemented\n");
-  return (struct sem_rec *) NULL;
+  char *parsed_s = parse_escape_chars(s);
+  Value *val = Builder.CreateGlobalStringPtr(parsed_s);
+
+  return s_node((void *)val, T_ADDR);
 }
 
 void

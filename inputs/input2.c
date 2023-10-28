@@ -12,6 +12,6 @@ int main()
   c = 5;
   d = 6;
 
-  //print("%d %3.2f %d %3.2f\n", a, b, c, d);
+  print("%d %3.2f %d %3.2f\n", a, b, c, d);
   return 0;
 }
