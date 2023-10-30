@@ -995,6 +995,16 @@ op1(const char *op, struct sem_rec *y)
       y->s_type &= ~T_ADDR;
       rec = s_node(Builder.CreateLoad(get_llvm_type(y->s_type), (Value *)y->s_value), y->s_type);
     }
+  } else if (*op == '~') {
+    rec = s_node(Builder.CreateNot((Value *)y->s_value), y->s_type);
+  } else if (*op == '-') {
+    if (y->s_type & T_DOUBLE) {
+      rec = s_node(Builder.CreateFNeg((Value *)y->s_value), y->s_type);
+    } else if (y->s_type & T_INT) {
+      rec = s_node(Builder.CreateNeg((Value *)y->s_value), y->s_type);
+    }
+  } else {
+    yyerror("invalid unary operatory");
   }
 
   return rec;
@@ -1005,22 +1015,6 @@ op1(const char *op, struct sem_rec *y)
  *
  * No LLVM API calls, but most functionality is abstracted to a separate
  * method used by op2, opb, and set.
- *
- * The separate method uses the following API calls:
- * IRBuilder::CreateAdd(Value *, Value *)
- * IRBuilder::CreateFAdd(Value *, Value *)
- * IRBuilder::CreateSub(Value *, Value *)
- * IRBuilder::CreateFSub(Value *, Value *)
- * IRBuilder::CreateMul(Value *, Value *)
- * IRBuilder::CreateFMul(Value *, Value *)
- * IRBuilder::CreateSDiv(Value *, Value *)
- * IRBuilder::CreateFDiv(Value *, Value *)
- * IRBuilder::CreateSRem(Value *, Value *)
- * IRBuilder::CreateAnd(Value *, Value *)
- * IRBuilder::CreateOr(Value *, Value *)
- * IRBuilder::CreateXOr(Value *, Value *)
- * IRBuilder::CreateShl(Value *, Value *)
- * IRBuilder::CreateAShr(Value *, Value *)
  */
 struct sem_rec*
 op2(const char *op, struct sem_rec *x, struct sem_rec *y)
@@ -1190,7 +1184,6 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
         return s_node(val, T_ADDR | T_DOUBLE);
       }
     } else {
-      // TODO: add error message
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
       return s_node(val, T_ADDR | T_DOUBLE);
     }
