@@ -49,7 +49,7 @@ CPPOBJECTS = obj/main.o obj/cgram.o obj/sem.o
 # Don't delete CSEM or any object file if make is killed or interrupted
 .PRECIOUS: $(CSEM) $(CFILES) $(CPPFILES)
 
-yacc:
+yacc: src/cgram.y
 	bison --yacc -vd -Wno-conflicts-sr src/cgram.y
 	mv y.tab.c src/cgram.cpp
 	mv y.tab.h include/y.tab.h
