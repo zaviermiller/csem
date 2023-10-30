@@ -1114,15 +1114,16 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
       return s_node(val, T_ADDR | T_INT);
     } else if (x->s_type & T_DOUBLE) {
       ConstantInt *ci = llvm::dyn_cast<ConstantInt>((Value *)y->s_value);
-      Value *doubleVal = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
-      val = Builder.CreateStore(doubleVal, (Value *)x->s_value);
+      Value *double_val = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
+      val = Builder.CreateStore(double_val, (Value *)x->s_value);
       return s_node(val, T_ADDR | T_DOUBLE);
     } else {
       // TODO: add error message
       return NULL;
     }
   } else {
-    Value *op_result = create_binary_op(string(op), x, y);
+    Value *load_var = Builder.CreateLoad(get_llvm_type(x->s_type), (Value *)x->s_value);
+    Value *op_result = create_binary_op(string(op), s_node(load_var, x->s_type), y);
     val = Builder.CreateStore(op_result, (Value *)x->s_value);
     return s_node(val, T_ADDR);
   }
