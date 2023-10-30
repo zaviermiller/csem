@@ -117,20 +117,10 @@ string type_string(int t) {
   return s;
 }
 
-void print_sem_rec(struct sem_rec *s) {
-  fprintf(stderr, "    sem_rec ptr:   %p\n", s);
-  fprintf(stderr, "      value ptr:   %p\n", s->s_value);
-  fprintf(stderr, "basic block ptr:   %p\n", s->s_bb);
-  fprintf(stderr, "      value ptr:   %p\n", s->s_value);
-  fprintf(stderr, "           type:   %s\n", type_string(s->s_type).c_str());
-  fprintf(stderr, "       link ptr:   %p\n", s->s_link);
-  fprintf(stderr, "      false ptr:   %p\n", s->s_false);
-  fprintf(stderr, "       true ptr:   %p\n\n", s->s_false);
-}
 
 int get_link_length(struct sem_rec *s) {
   int total = 0;
-  for (s; s->s_link; s = s->s_link) {
+  for (; s->s_link; s = s->s_link) {
     total += 1;
   }
 
@@ -332,7 +322,7 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
       val = Builder.CreateAShr(a_val, b_val);
     else {
       fprintf(stderr, "invalid operation\n");
-      return (struct sem_rec *)NULL;
+      exit(1);
     }
     return s_node(val, a->s_type);
   } else if (a->s_type & T_DOUBLE && b->s_type & T_DOUBLE) {
@@ -346,13 +336,13 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
       val = Builder.CreateFDiv(a_val, b_val);
     else {
       fprintf(stderr, "invalid operation\n");
-      return (struct sem_rec *)NULL;
+      exit(1);
     }
     return s_node(val, a->s_type);
   }
 
   fprintf(stderr, "sem: invalid types for binary operation (%s) & (%s)\n", type_string(a->s_type).c_str(), type_string(b->s_type).c_str());
-  return (struct sem_rec *)NULL;
+  exit(1);
 }
 
 
@@ -381,13 +371,9 @@ call(char *f, struct sem_rec *args)
 
   if (entry == NULL) {
     fprintf(stderr, "sem: function not defined\n");
-    return (struct sem_rec *)NULL;
+    exit(1);
   }
 
-  // if (entry->i_type != T_PROC) {
-    // fprintf(stderr, "sem: attempting to call non-function\n");
-    // return (struct sem_rec *)NULL;
-  // }
 
   Value *val = Builder.CreateCall((Function *)entry->i_value, makeArrayRef(vals));
 
@@ -682,7 +668,6 @@ void
 dowhile(void *cond_stmt, struct sem_rec *cond, void *loop_body,
   struct sem_rec *n, void *exit)
 {
-  struct sem_rec *b, *c;
   backpatch(cond->s_true, loop_body);
   backpatch(cond->s_false, exit);
   backpatch(n, cond_stmt);
@@ -819,7 +804,6 @@ struct labelnode *get_label_node(const char *id) {
 
   for (i = 0; i < numlabelids; i++) {
     l = labels[i];
-    fprintf(stderr, "found label %s (%p), bb: %p\n", l.id, &l, l.bb);
     if (strcmp(id, l.id) == 0) {
       return &labels[i];
     }
@@ -840,15 +824,11 @@ ftail()
   struct gotonode g;
   struct labelnode *l;
 
-  fprintf(stderr, "ftail called, num gotos: %d\n", numgotos);
-
   // backpatch goto statements
   for (i = 0; i < numgotos; i++) {
     g = gotos[i];
     l = get_label_node(g.id);
-    fprintf(stderr, "backpatching label %s\n", l->id);
     if (l == NULL) {
-      fprintf(stderr, "sem: label not defined\n");
       return;
     }
     // backpatch(g.branch, l->bb);
@@ -1058,8 +1038,7 @@ op2(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 opb(const char *op, struct sem_rec *x, struct sem_rec *y)
 {
-  fprintf(stderr, "sem: opb not implemented\n");
-  return ((struct sem_rec *) NULL);
+  return create_binary_op(op, x, y);
 }
 
 /*
@@ -1161,7 +1140,7 @@ cast (struct sem_rec *y, int t)
     t &= ~T_DOUBLE;
   } else {
     fprintf(stderr, "sem: invalid type cast (%s -> %s)\n", type_string(y->s_type).c_str(), type_string(t).c_str());
-    return (struct sem_rec *)NULL;
+    exit(1);
   }
   return s_node((void *)val, t);
 }
