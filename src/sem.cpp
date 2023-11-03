@@ -237,22 +237,25 @@ void backpatch(struct sem_rec *rec, void *bb)
 {
   unsigned i;
   BranchInst *br_inst;
-  struct sem_rec *p = rec;
 
-  for (p = rec; p; p = p->s_link) {
-    if ((br_inst = llvm::dyn_cast<BranchInst>((Value *) p->s_value))) {
+  // loop through each record in the list
+  for (; rec; rec = rec->s_link) {
+    if ((br_inst = llvm::dyn_cast<BranchInst>((Value *) rec->s_value))) {
       for (i = 0; i < br_inst->getNumSuccessors(); i++) {
-        if (br_inst->getSuccessor(i) == ((BasicBlock *) p->s_bb)) {
+        if (br_inst->getSuccessor(i) == ((BasicBlock *) rec->s_bb)) {
           br_inst->setSuccessor(i, (BasicBlock *)bb);
         }
       }
     } else {
-      fprintf(stderr, "error: backpatch with non-branch instruction\n");
+      fprintf(stderr, "sem: backpatch with non-branch instruction\n");
       exit(1);
     }
   }
 }
 
+/*
+ * backpatch_conts - backpatch all continue statements
+ */
 void backpatch_conts(void *bb) {
   struct sem_rec *rec;
   for(rec = looptop->conts; rec; rec = rec->s_link) {
@@ -260,6 +263,9 @@ void backpatch_conts(void *bb) {
   }
 }
 
+/*
+ * backpatch_breaks - backpatch all break statements
+ */
 void backpatch_breaks(void *bb) {
   struct sem_rec *rec;
   for(rec = looptop->breaks; rec; rec = rec->s_link) {
@@ -290,6 +296,8 @@ void backpatch_breaks(void *bb) {
 
 struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b) {
   Value *a_val, *b_val, *val;
+
+  // cast a or b to double if one is a double and one is an int
   if (a->s_type & T_INT && b->s_type & T_DOUBLE) {
     a = cast(a, T_DOUBLE);
   } else if (a->s_type & T_DOUBLE && b->s_type & T_INT) {
@@ -300,6 +308,7 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
   b_val = (Value *)b->s_value;
 
   if (a->s_type & T_INT && b->s_type & T_INT) {
+    // int only operations
     if (op == "+")
       val = Builder.CreateAdd(a_val, b_val);
     else if (op == "-")
@@ -321,7 +330,8 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
     else if (op == ">>")
       val = Builder.CreateAShr(a_val, b_val);
     else {
-      fprintf(stderr, "invalid operation\n");
+      // didn't recognize the operation
+      fprintf(stderr, "sem: invalid int operator '%s'\n", op.c_str());
       exit(1);
     }
     return s_node(val, a->s_type);
@@ -335,7 +345,7 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
     else if (op == "/")
       val = Builder.CreateFDiv(a_val, b_val);
     else {
-      fprintf(stderr, "invalid operation\n");
+      fprintf(stderr, "sem: invalid double operator '%s'\n", op.c_str());
       exit(1);
     }
     return s_node(val, a->s_type);
@@ -362,20 +372,25 @@ call(char *f, struct sem_rec *args)
 {
   vector<Value *> vals;
   struct sem_rec *arg = args;
+  Value *val;
+  struct id_entry *entry;
+
+  // put all args into a vector
   while (arg != NULL) {
     vals.insert(vals.begin(), (Value *)arg->s_value);
     arg = arg->s_link;
   }
 
-  struct id_entry *entry = lookup(f, 0);
+  // lookup the function we are calling
+  entry = lookup(f, 0);
 
   if (entry == NULL) {
-    fprintf(stderr, "sem: function not defined\n");
+    fprintf(stderr, "sem: function '%s' not defined\n", f);
     exit(1);
   }
 
 
-  Value *val = Builder.CreateCall((Function *)entry->i_value, makeArrayRef(vals));
+  val = Builder.CreateCall((Function *)entry->i_value, makeArrayRef(vals));
 
   return s_node(val, T_PROC);
 }
@@ -422,6 +437,7 @@ ccexpr(struct sem_rec *e)
 {
   BasicBlock *tmp_true, *tmp_false;
   Value *val;
+
   tmp_true = create_tmp_label();
   tmp_false = create_tmp_label();
   val = Builder.CreateCondBr((Value *)e->s_value, tmp_true, tmp_false);
@@ -464,6 +480,7 @@ struct sem_rec*
 ccor(struct sem_rec *e1, void *m, struct sem_rec *e2)
 {
   backpatch(e1->s_false, m);
+
   return node(
           (void *)NULL,
           (void *)NULL,
@@ -487,6 +504,7 @@ struct sem_rec*
 con(const char *x)
 {
   struct id_entry *entry;
+
   if ((entry = lookup(x, 0)) == NULL) {
     entry = install (x, 0);
     entry->i_type = T_INT;
@@ -512,6 +530,7 @@ void
 dobreak()
 {
   struct sem_rec *n_rec;
+
   n_rec = n();
   looptop->breaks = merge(looptop->breaks, n_rec);
 }
@@ -529,6 +548,7 @@ void
 docontinue()
 {
   struct sem_rec *n_rec;
+
   n_rec = n();
   looptop->conts = merge(looptop->conts, n_rec);
 }
@@ -588,10 +608,11 @@ dogoto(char *id)
 {
   BasicBlock *lbl;
   struct gotonode *g;
+
   lbl = create_tmp_label();
 
   g = &gotos[numgotos++];
-  g->id = (char *)malloc(strlen(id) + 1);
+  g->id = (char *)malloc(strlen(id) + 1); // do i need to malloc here?
   strcpy((char *)g->id, id);
   g->branch = Builder.CreateBr(lbl);
 }
@@ -624,12 +645,12 @@ doif(struct sem_rec *cond, void *m1, void *m2)
  * None -- but uses backpatch
  */
 void
-doifelse(struct sem_rec *cond, void *m1, struct sem_rec *n,
-  void *m2, void *m3)
+doifelse(struct sem_rec *cond, void *true_body, struct sem_rec *n,
+  void *false_body, void *exit)
 {
-  backpatch(cond->s_true, m1);
-  backpatch(cond->s_false, m2);
-  backpatch(n, m3);
+  backpatch(cond->s_true, true_body);
+  backpatch(cond->s_false, false_body);
+  backpatch(n, exit);
 }
 
 /*
@@ -969,10 +990,10 @@ m ()
 struct sem_rec *n()
 {
   BasicBlock *bb;
-
+  Value *val;
   bb = create_tmp_label();
 
-  Value *val = Builder.CreateBr(bb);
+  val = Builder.CreateBr(bb);
 
   return node((void *)val, (void *)bb, 0, (struct sem_rec *)NULL, (struct sem_rec *)NULL, (struct sem_rec *)NULL);
 }
@@ -1065,6 +1086,7 @@ rel(const char *op, struct sem_rec *x, struct sem_rec *y)
 {
   Value *val = NULL;
 
+  // cast as needed
   if (x->s_type == T_INT && y->s_type == T_DOUBLE) {
     x = cast(x, T_DOUBLE);
   } else if (x->s_type == T_DOUBLE && y->s_type == T_INT) {
@@ -1122,8 +1144,10 @@ rel(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 cast (struct sem_rec *y, int t)
 {
-  if (y->s_type == t) return y;
   Value *val;
+
+  if (y->s_type == t) return y;
+
   if (y->s_type & T_INT && t & T_DOUBLE) {
     val = Builder.CreateSIToFP((Value *)y->s_value, get_llvm_type(T_DOUBLE));
     t |= y->s_type;
@@ -1166,21 +1190,22 @@ cast (struct sem_rec *y, int t)
 struct sem_rec*
 set(const char *op, struct sem_rec *x, struct sem_rec *y)
 {
-  Value *val;
+  Value *val, *double_val, *load_var;
   ConstantInt *ci;
+  struct sem_rec *op_result, *casted_rec;
+
   if (*op == (char)0) {
     if (x->s_type & T_INT) {
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
       return s_node(val, T_ADDR | T_INT);
     } else if (x->s_type & T_DOUBLE && y->s_type & T_INT) {
-      // need to cast to a double event if not set to an immediate...
       if ((ci = llvm::dyn_cast<ConstantInt>((Value *)y->s_value))) {
-        Value *double_val = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
+        double_val = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
         val = Builder.CreateStore(double_val, (Value *)x->s_value);
         return s_node(val, T_ADDR | T_DOUBLE);
       } else {
-        struct sem_rec *s = cast(y, T_DOUBLE);
-        val = Builder.CreateStore((Value *)s->s_value, (Value *)x->s_value);
+        casted_rec = cast(y, T_DOUBLE);
+        val = Builder.CreateStore((Value *)casted_rec->s_value, (Value *)x->s_value);
         return s_node(val, T_ADDR | T_DOUBLE);
       }
     } else {
@@ -1188,8 +1213,8 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
       return s_node(val, T_ADDR | T_DOUBLE);
     }
   } else {
-    Value *load_var = Builder.CreateLoad(get_llvm_type(x->s_type), (Value *)x->s_value);
-    struct sem_rec *op_result = create_binary_op(string(op), s_node(load_var, x->s_type), y);
+    load_var = Builder.CreateLoad(get_llvm_type(x->s_type), (Value *)x->s_value);
+    op_result = create_binary_op(string(op), s_node(load_var, x->s_type), y);
     val = Builder.CreateStore((Value *)op_result->s_value, (Value *)x->s_value);
     return s_node(val, T_ADDR | op_result->s_type);
   }
