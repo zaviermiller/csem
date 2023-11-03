@@ -2,7 +2,11 @@
 int print(const char *fmt, ...);
 #endif
 int main() {
-  if (1 == 1) {
+  int a, b;
+
+  a = 1;
+  b = 1;
+  if (a == b) {
     print("hey\n");
   } else {
     print("yo\n");

@@ -100,31 +100,42 @@ struct gotonode {
 int numgotos = 0;    /* number of gotos to be backpatched */
 int numlabelids = 0; /* total label ids in function */
 
-string type_string(int t) {
-  string s;
-  if (t & T_INT) s += "INT,";
-  if (t & T_STR) s += "STRING,";
-  if (t & T_DOUBLE) s += "DOUBLE,";
-  if (t & T_PROC) s += "FUNCTION,";
-  if (t & T_ARRAY) s += "ARRAY,";
-  if (t & T_ADDR) s += "ADDRESS,";
-  if (t & T_LBL) s += "LABEL,";
+/*
+ * type_string - returns a string containing all the types represented by the given int
+ */
+string type_string(struct sem_rec *s) {
+  string str;
+  int t;
 
-  if (s == "") s = "NOT SET,";
+  t = s->s_type;
 
-  s.pop_back();
+  if (t & T_INT) str += "INT,";
+  if (t & T_STR) str += "STRING,";
+  if (t & T_DOUBLE) str += "DOUBLE,";
+  if (t & T_PROC) str += "FUNCTION,";
+  if (t & T_ARRAY) str += "ARRAY,";
+  if (t & T_ADDR) str += "ADDRESS,";
+  if (t & T_LBL) str += "LABEL,";
 
-  return s;
+  if (str == "") str = "NOT SET,";
+
+  str.pop_back();
+
+  return str;
 }
 
+/*
+ * is_int - returns non zero integer if given sem_rec is an int
+ */
+int is_int(struct sem_rec *s) {
+  return s->s_type & T_INT;
+}
 
-int get_link_length(struct sem_rec *s) {
-  int total = 0;
-  for (; s->s_link; s = s->s_link) {
-    total += 1;
-  }
-
-  return total;
+/*
+ * is_double - returns non zero integer if given sem_rec is a double
+ */
+int is_double(struct sem_rec *s) {
+  return s->s_type & T_DOUBLE;
 }
 
 // assumes that the sem_recs s_value is a ConstantInt
@@ -298,16 +309,16 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
   Value *a_val, *b_val, *val;
 
   // cast a or b to double if one is a double and one is an int
-  if (a->s_type & T_INT && b->s_type & T_DOUBLE) {
+  if (is_int(a) && is_double(b)) {
     a = cast(a, T_DOUBLE);
-  } else if (a->s_type & T_DOUBLE && b->s_type & T_INT) {
+  } else if (is_double(a) && is_int(b)) {
     b = cast(b, T_DOUBLE);
   }
 
   a_val = (Value *)a->s_value;
   b_val = (Value *)b->s_value;
 
-  if (a->s_type & T_INT && b->s_type & T_INT) {
+  if (is_int(a) && is_double(b)) {
     // int only operations
     if (op == "+")
       val = Builder.CreateAdd(a_val, b_val);
@@ -335,7 +346,7 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
       exit(1);
     }
     return s_node(val, a->s_type);
-  } else if (a->s_type & T_DOUBLE && b->s_type & T_DOUBLE) {
+  } else if (is_double(a) && is_double(b)) {
     if (op == "+")
       val = Builder.CreateFAdd(a_val, b_val);
     else if (op == "-")
@@ -351,7 +362,7 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
     return s_node(val, a->s_type);
   }
 
-  fprintf(stderr, "sem: invalid types for binary operation (%s) & (%s)\n", type_string(a->s_type).c_str(), type_string(b->s_type).c_str());
+  fprintf(stderr, "sem: invalid types for binary operation (%s) & (%s)\n", type_string(a).c_str(), type_string(b).c_str());
   exit(1);
 }
 
@@ -612,8 +623,7 @@ dogoto(char *id)
   lbl = create_tmp_label();
 
   g = &gotos[numgotos++];
-  g->id = (char *)malloc(strlen(id) + 1); // do i need to malloc here?
-  strcpy((char *)g->id, id);
+  g->id = id;
   g->branch = Builder.CreateBr(lbl);
 }
 
@@ -819,6 +829,9 @@ fname(int t, char *id)
   return entry;
 }
 
+/*
+ * get_label_node - returns the label node with a given id
+ */
 struct labelnode *get_label_node(const char *id) {
   struct labelnode l;
   int i;
@@ -842,18 +855,17 @@ void
 ftail()
 {
   int i;
-  struct gotonode g;
+  struct gotonode *g;
   struct labelnode *l;
 
-  // backpatch goto statements
+  // set branch successors to gotos
   for (i = 0; i < numgotos; i++) {
-    g = gotos[i];
-    l = get_label_node(g.id);
+    g = &gotos[i];
+    l = get_label_node(g->id);
     if (l == NULL) {
       return;
     }
-    // backpatch(g.branch, l->bb);
-    g.branch->setSuccessor(0, l->bb);
+    g->branch->setSuccessor(0, l->bb);
   }
 
   // do clean up
@@ -949,8 +961,7 @@ labeldcl(const char *id)
   // create record in labels list
   l = &labels[numlabelids++];
   l->bb = bb;
-  l->id = (char *)malloc(strlen(id) + 1);
-  strcpy((char *)l->id, id);
+  l->id = id;
 }
 
 /*
@@ -1019,9 +1030,9 @@ op1(const char *op, struct sem_rec *y)
   } else if (*op == '~') {
     rec = s_node(Builder.CreateNot((Value *)y->s_value), y->s_type);
   } else if (*op == '-') {
-    if (y->s_type & T_DOUBLE) {
+    if (is_double(y)) {
       rec = s_node(Builder.CreateFNeg((Value *)y->s_value), y->s_type);
-    } else if (y->s_type & T_INT) {
+    } else if (is_int(y)) {
       rec = s_node(Builder.CreateNeg((Value *)y->s_value), y->s_type);
     }
   } else {
@@ -1086,49 +1097,65 @@ rel(const char *op, struct sem_rec *x, struct sem_rec *y)
 {
   Value *val = NULL;
 
-  // cast as needed
-  if (x->s_type == T_INT && y->s_type == T_DOUBLE) {
+
+  // cast to double if either value is a double
+  if (is_int(x) && is_double(y)) {
     x = cast(x, T_DOUBLE);
-  } else if (x->s_type == T_DOUBLE && y->s_type == T_INT) {
+  } else if (is_double(x) && is_int(y)) {
     y = cast(y, T_DOUBLE);
   }
 
   if (*op == '<') {
-    if (x->s_type == T_INT && y->s_type == T_INT) {
+    if (is_int(x) && is_int(y)) {
       val = Builder.CreateICmpSLT((Value *)x->s_value, (Value *)y->s_value);
-    } else if (x->s_type == T_DOUBLE && y->s_type == T_DOUBLE) {
+    } else if (is_double(x) && is_double(y)) {
       val = Builder.CreateFCmpOLT((Value *)x->s_value, (Value *)y->s_value);
     }
-  } else if (*op == '>') {
-    if (x->s_type == T_INT && y->s_type == T_INT) {
+  }
+
+  else if (*op == '>') {
+    if (is_int(x) && is_int(y)) {
       val = Builder.CreateICmpSGT((Value *)x->s_value, (Value *)y->s_value);
-    } else if (x->s_type == T_DOUBLE && y->s_type == T_DOUBLE) {
+    } else if (is_double(x) && is_double(y)) {
       val = Builder.CreateFCmpOGT((Value *)x->s_value, (Value *)y->s_value);
     }
-  } else if (strncmp(op, "==", 2) == 0) {
-    if (x->s_type == T_INT && y->s_type == T_INT) {
+  }
+
+  else if (strncmp(op, "==", 2) == 0) {
+    if (is_int(x) && is_int(y)) {
       val = Builder.CreateICmpEQ((Value *)x->s_value, (Value *)y->s_value);
-    } else if (x->s_type == T_DOUBLE && y->s_type == T_DOUBLE) {
+    } else if (is_double(x) && is_double(y)) {
       val = Builder.CreateFCmpOEQ((Value *)x->s_value, (Value *)y->s_value);
     }
-  } else if (strncmp(op, "!=", 2) == 0) {
-    if (x->s_type == T_INT && y->s_type == T_INT) {
+  }
+
+  else if (strncmp(op, "!=", 2) == 0) {
+    if (is_int(x) && is_int(y)) {
       val = Builder.CreateICmpNE((Value *)x->s_value, (Value *)y->s_value);
-    } else if (x->s_type == T_DOUBLE && y->s_type == T_DOUBLE) {
+    } else if (is_double(x) && is_double(y)) {
       val = Builder.CreateFCmpONE((Value *)x->s_value, (Value *)y->s_value);
     }
-  } else if (strncmp(op, "<=", 2) == 0) {
-    if (x->s_type == T_INT && y->s_type == T_INT) {
+  }
+
+  else if (strncmp(op, "<=", 2) == 0) {
+    if (is_int(x) && is_int(y)) {
       val = Builder.CreateICmpSLE((Value *)x->s_value, (Value *)y->s_value);
-    } else if (x->s_type == T_DOUBLE && y->s_type == T_DOUBLE) {
+    } else if (is_double(x) && is_double(y)) {
       val = Builder.CreateFCmpOLE((Value *)x->s_value, (Value *)y->s_value);
     }
-  } else if (strncmp(op, ">=", 2) == 0) {
-    if (x->s_type == T_INT && y->s_type == T_INT) {
+  }
+
+  else if (strncmp(op, ">=", 2) == 0) {
+    if (is_int(x) && is_int(y)) {
       val = Builder.CreateICmpSGE((Value *)x->s_value, (Value *)y->s_value);
-    } else if (x->s_type == T_DOUBLE && y->s_type == T_DOUBLE) {
+    } else if (is_double(x) && is_double(y)) {
       val = Builder.CreateFCmpOGE((Value *)x->s_value, (Value *)y->s_value);
     }
+  }
+
+  else {
+    fprintf(stderr, "sem: invalid relational operator '%s'", op);
+    exit(1);
   }
 
   return ccexpr(s_node((void *)val, T_INT));
@@ -1146,18 +1173,24 @@ cast (struct sem_rec *y, int t)
 {
   Value *val;
 
-  if (y->s_type == t) return y;
+  // return y if its type already matches t
+  if (y->s_type & t) return y;
 
-  if (y->s_type & T_INT && t & T_DOUBLE) {
+  // cast from int to double
+  if (is_int(y) && t & T_DOUBLE) {
     val = Builder.CreateSIToFP((Value *)y->s_value, get_llvm_type(T_DOUBLE));
-    t |= y->s_type;
-    t &= ~T_INT;
-  } else if (y->s_type & T_DOUBLE && t & T_INT) {
+    t |= (y->s_type & (~T_INT));
+  }
+
+  // cast from double to int
+  else if (is_double(y) && t & T_INT) {
     val = Builder.CreateFPToSI((Value *)y->s_value, get_llvm_type(T_INT));
-    t |= y->s_type;
-    t &= ~T_DOUBLE;
-  } else {
-    fprintf(stderr, "sem: invalid type cast (%s -> %s)\n", type_string(y->s_type).c_str(), type_string(t).c_str());
+    t |= (y->s_type & (~T_DOUBLE));
+  }
+
+  // invalid cast
+  else {
+    fprintf(stderr, "sem: invalid type cast (%s -> %s)\n", type_string(y).c_str(), type_string(s_node(NULL, t)).c_str());
     exit(1);
   }
   return s_node((void *)val, t);
@@ -1194,27 +1227,44 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
   ConstantInt *ci;
   struct sem_rec *op_result, *casted_rec;
 
+  // simple assignment
   if (*op == (char)0) {
-    if (x->s_type & T_INT) {
+    // setting x to an int (what happens when y is a double?)
+    if (is_int(x)) {
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
       return s_node(val, T_ADDR | T_INT);
-    } else if (x->s_type & T_DOUBLE && y->s_type & T_INT) {
+    }
+
+    else if (is_double(x) && is_int(y)) {
+      // setting a double var to an integer constant
       if ((ci = llvm::dyn_cast<ConstantInt>((Value *)y->s_value))) {
         double_val = ConstantFP::get(get_llvm_type(T_DOUBLE), ci->getValue().getSExtValue());
         val = Builder.CreateStore(double_val, (Value *)x->s_value);
         return s_node(val, T_ADDR | T_DOUBLE);
-      } else {
+      }
+      
+      // setting a double var to an integer var
+      else {
         casted_rec = cast(y, T_DOUBLE);
         val = Builder.CreateStore((Value *)casted_rec->s_value, (Value *)x->s_value);
         return s_node(val, T_ADDR | T_DOUBLE);
       }
-    } else {
+    }
+    
+    // setting a double var to a double
+    else {
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
       return s_node(val, T_ADDR | T_DOUBLE);
     }
-  } else {
+  }
+
+  // arithmetic set
+  else {
+    // load the current value of the var
     load_var = Builder.CreateLoad(get_llvm_type(x->s_type), (Value *)x->s_value);
-    op_result = create_binary_op(string(op), s_node(load_var, x->s_type), y);
+    // create binary operation instruction
+    op_result = create_binary_op(string(op), s_node(load_var, x->s_type & (~T_ADDR)), y);
+    // store the result
     val = Builder.CreateStore((Value *)op_result->s_value, (Value *)x->s_value);
     return s_node(val, T_ADDR | op_result->s_type);
   }
@@ -1234,8 +1284,12 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
 struct sem_rec*
 genstring(char *s)
 {
-  char *parsed_s = parse_escape_chars(s);
-  Value *val = Builder.CreateGlobalStringPtr(parsed_s);
+  char *parsed_s;
+  Value *val;
+
+  // parse the escape chars and create a global for the string literal
+  parsed_s = parse_escape_chars(s);
+  val = Builder.CreateGlobalStringPtr(parsed_s);
 
   return s_node((void *)val, T_ADDR | T_STR);
 }
