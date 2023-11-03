@@ -318,7 +318,7 @@ struct sem_rec *create_binary_op(string op, struct sem_rec *a, struct sem_rec *b
   a_val = (Value *)a->s_value;
   b_val = (Value *)b->s_value;
 
-  if (is_int(a) && is_double(b)) {
+  if (is_int(a) && is_int(b)) {
     // int only operations
     if (op == "+")
       val = Builder.CreateAdd(a_val, b_val);
