@@ -1231,6 +1231,9 @@ set(const char *op, struct sem_rec *x, struct sem_rec *y)
   if (*op == (char)0) {
     // setting x to an int (what happens when y is a double?)
     if (is_int(x)) {
+      if (is_double(y)) {
+        y = cast(y, T_INT);
+      }
       val = Builder.CreateStore((Value *)y->s_value, (Value *)x->s_value);
       return s_node(val, T_ADDR | T_INT);
     }
