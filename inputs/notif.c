@@ -6,4 +6,6 @@ int main() {
   } else {
     print("ok\n");
   }
+
+  return 0;
 }
